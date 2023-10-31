@@ -1,136 +1,8 @@
-# Functions for creating the validation datasets and SOM
-# Given the window sizes, overlaps, and list of features specified on the main page
-# process the data by that specification
 
-# compute features based on the features list provided
-compute_features <- function(window_chunk, featuresList) {
-  
-  # Determine the available axes from the dataset
-  all_axes <- c("X_accel", "Y_accel", "Z_accel", "X_gyro", "Y_gyro", "Z_gyro")
-  available_axes <- intersect(colnames(window_chunk), all_axes) # the ones we actually have
-  
-  result <- data.frame(row.names = 1)
-  
-  for (axis in available_axes) {
-    
-    # axis = "X_accel"
-    
-    if ("mean" %in% featuresList) {
-      result[paste0("mean_", axis)] <- mean(window_chunk[[axis]])
-    }
-    
-    if ("max" %in% featuresList) {
-      result[paste0("max_", axis)] <- max(window_chunk[[axis]])
-    }
-    
-    if ("min" %in% featuresList) {
-      result[paste0("min_", axis)] <- min(window_chunk[[axis]])
-    }
-    
-    if ("sd" %in% featuresList) {
-      result[paste0("sd_", axis)] <- sd(window_chunk[[axis]])
-    }
-  }
-  
-  accel_axes <- intersect(available_axes, c("X_accel", "Y_accel", "Z_accel"))
-  
-  if (length(accel_axes) > 0 && ("SMA" %in% featuresList)) {
-    result$SMA <- sum(rowSums(abs(window_chunk[, accel_axes]))) / nrow(window_chunk)
-  }
-  
-  if (length(accel_axes) > 0 && ("minODBA" %in% featuresList || "maxODBA" %in% featuresList)) {
-    ODBA <- rowSums(abs(window_chunk[, accel_axes]))
-    result$minODBA <- min(ODBA)
-    result$maxODBA <- max(ODBA)
-  }
-  
-  if (length(accel_axes) > 0 && ("minVDBA" %in% featuresList || "maxVDBA" %in% featuresList)) {
-    VDBA <- sqrt(rowSums(window_chunk[, accel_axes]^2))
-    result$minVDBA <- min(VDBA)
-    result$maxVDBA <- max(VDBA)
-  }
-  
-  if ("cor" %in% featuresList) {
-    for (i in 1:(length(accel_axes) - 1)) {
-      for (j in (i+1):length(accel_axes)) {
-        axis1 <- accel_axes[i]
-        axis2 <- accel_axes[j]
-        result[paste0("cor_", axis1, "_", axis2)] <- cor(window_chunk[[axis1]], window_chunk[[axis2]], use="complete.obs")
-      }
-    }
-  }
-  
-  result$activity <- names(which.max(table(window_chunk$activity)))
-  result$ID <- window_chunk$ID[1]
-  
-  return(result)
-}
-
-process_data <- function(set, featuresList, window, overlap) {
-  
-  # Initialize an empty list to store the processed data chunks
-  processed_windows <- list()
-  
-  # Update starting and ending points for the next chunk
-  window_samples = 1 * 20 # based on our data Hz
-  
-  # Define the starting and ending points for the chunks
-  st <- 1
-  fn <- window_samples
-  
-  dat <- read.csv(paste0("Data/", set))
-  
-  # Iterate over the chunks of data
-  while (fn <= nrow(dat)) {
-    
-    # Extract the current chunk
-    window_chunk <- dat[st:fn, ]
-    
-    # Compute features for the chunk
-    features_data <- compute_features(window_chunk, featuresList)
-    
-    # Add the processed chunk to the list
-    processed_windows <- c(processed_windows, list(features_data))
-    
-    st <- st + window_samples
-    fn <- fn + window_samples
-    
-  }
-  
-  # Combine all the processed chunks into a single data frame
-  processed_data <- do.call(rbind, processed_windows)
-  
-  return(processed_data)
-}
-
-
-
-# functions to create the various testing data, saving them both as .rda files
-# Formatting the data #### MAY HAVE TO CHANGE THIS
-trSamp2 <- function(x) { 
-  d <- x[,2:21]
-  activity <- as.factor(x$activity) # Corresponding activities
-  out <- list(measurements = as.matrix(d), activity = activity)
-  return(out)
-}
-
-# process the data into lists
-make_testing_data <- function(filename, file_path) {
-  # filename <- "HoldOut"
-  # file_path <- "Data/HoldOut_Processed_Data.csv"
-  
-  dat <- read.csv(file_path)
-  dat <- na.omit(dat)
-  
-  tstDat <- trSamp2(dat)
-  testing_file_path <- paste0("RdaObjects/", filename, "_TestingData.rda")
-  save(tstDat, file = testing_file_path)
-}
 
 # when you have determined which shape is the best, run the full version and get all the outputs
 evaluateSOM <- function(ssom, type, tstDat) {
   
-  file_path <- here()
   ssom.pred <- predict(ssom, newdata = tstDat)
   ptab <- table(predictions = ssom.pred$predictions$act, act = tstDat$act)
   
@@ -146,7 +18,7 @@ evaluateSOM <- function(ssom, type, tstDat) {
   
   dat_out<-as.data.frame(rbind(SENS,PREC,SPEC,ACCU))
   statistical_results <- cbind(test = rownames(dat_out), dat_out)
-  write.csv(statistical_results, file.path(file_path, paste0("Results/", type, "_Statistical_results.csv")))
+  write.csv(statistical_results, file.path(Experiment_path, paste0("Results/", type, "_Statistical_results.csv")))
   
   SOMoutput <- list(SOM = ssom, SOM_performance = statistical_results)
   
@@ -181,6 +53,209 @@ Summarise_results <- function(Results_tables) {
     Summary_results <- rbind(Summary_results, average_table1)
   }
   
-  write.csv(Summary_results, paste0("Results/Summary_results.csv"))
+  write.csv(Summary_results, file.path(Experiment_path, "Results/Summary_results.csv"))
   return(Summary_results)
 }
+
+# Functions to test multiple shapes to find the optimal shape for SOM
+# run the actual SOM tests combining many of the functions above
+run_som_tests <- function(trDat, tstDat, file_path) {
+  
+  results <- list()
+  shape_accuracy_score <- list() # to store accuracy scores for each iteration
+  somsize3 = generate_shapes() # shapes to test
+  
+  AllIterationsResults <- data.frame() # initialize an empty dataframe outside the loop
+  
+  for (bb in 1:nrow(somsize3)) { # loop through the different shapes
+    
+    print(bb)
+    
+    for (iter in 1:1) { # Go through the 3 iterations for each shape
+      iteration_results <- testing_the_SOM(trDat, tstDat, somsize3[bb,1], somsize3[bb,2])
+      AllIterationsResults <- rbind(AllIterationsResults, iteration_results)
+    }
+    
+    shape_accuracy_score[[bb]] <- generate_accuracy_score(AllIterationsResults)
+    results[[bb]] <- list("acc3list" = AllIterationsResults)
+  }
+  
+  # Combine all accuracy scores
+  all_shape_averages <- do.call(rbind, shape_accuracy_score)
+  
+  # Calculate mean accuracy for each width-height combination 
+  average_accuracies <- all_shape_averages %>%
+    group_by(width, height) %>%
+    summarize(mean_acc = mean(acc), .groups = "drop")
+  
+  # make the heatmap using the average_accuracies
+  #heatmap <- create_heatmap(average_accuracies, file_path)
+  
+  best_shape <- determine_best_shape(average_accuracies)
+  best_width <- best_shape$width
+  best_height <- best_shape$height
+  
+  # Return the results, including the best shapes 
+  return(list("best_width" = best_width, "best_height" = best_height))
+}
+
+# choose the best shape
+determine_best_shape <- function(average_accuracies) {
+  best_shape <- average_accuracies[which.max(average_accuracies$mean_acc), ]
+  return(list("width" = best_shape$width, "height" = best_shape$height))
+}
+
+# the actual test that's performed on the training/testing data, returns overallResultsTable
+testing_the_SOM <- function(trDat, tstDat, width, height) {  # originally doSOMperf
+  
+  # build the som using the training data
+  ssom <- supersom(trDat, grid = somgrid(width, height, "hexagonal"))
+  # predict on the testing data # skip if it doesn't work
+  tryCatch({
+    ssom.pred <- predict(ssom, newdata = tstDat)
+  }, 
+  error = function(e) {
+    if (grepl("Number of columns of newdata do not match codebook vectors", e$message)) {
+      print("Error encountered with mismatched columns. Skipping this iteration.")
+      next()
+    } else {
+      stop(e)  # If it's a different error, continue with the error propagation
+    }
+  })
+  # save the results as a table
+  resultsTable <- table(predictions = ssom.pred$predictions$act, act = tstDat$act)
+  
+  # use table to make statistics for understanding the model performance
+  true_positives  <- diag(resultsTable)
+  false_positives <- rowSums(resultsTable) - true_positives
+  false_negatives <- colSums(resultsTable) - true_positives
+  true_negatives  <- sum(resultsTable) - true_positives - false_positives - false_negatives
+  SENS<-c(true_positives/(true_positives+false_negatives), shape=width)
+  PREC<-c(true_positives/(true_positives+false_positives), shape=width)
+  SPEC<-c(true_negatives/(true_negatives+false_positives), shape=width)
+  ACCU<-c((true_positives+true_negatives)/(true_positives+true_negatives+false_positives+false_negatives), shape=width)
+  
+  # save the statistics 
+  statisticsTable <- as.data.frame(rbind(SENS,PREC,SPEC,ACCU))
+  # save as a table that gives the results, size, and time it took to compute
+  overallResultsTable <- cbind(test = rownames(statisticsTable), statisticsTable, width=width, height=height)
+  # return that dataframe
+  return(overallResultsTable)
+}
+
+# generate shapes to test
+generate_shapes <- function() {
+  somsize <- rep(seq(4,9,1),6) # Create some widths
+  somsize2 <- rep(4:9, times=1, each=6) # Create some lengths
+  somsize3 <- cbind(somsize, somsize2) # Combine the sizes
+  return(somsize3)
+}
+
+# generate an accuracy heatmap matrix
+generate_accuracy_score <- function(AllIterationsResults) {
+  accuracy_scores <- subset(AllIterationsResults, test=='ACCU') # extract the accuracy scores for each
+  # rearrange to be a long dataframe
+  long_accuracy_scores <- accuracy_scores %>%
+    gather(key = "behavior", value = "accuracy", 
+           2:length(selectedBehaviours)) %>%
+    select(behavior, accuracy, width, height)
+  mean_accuracy_scores <- long_accuracy_scores %>%
+    group_by(width, height) %>%
+    summarise(mean_accuracy = mean(accuracy), .groups = "drop")
+  
+  shape_accuracy_score <- data.frame(acc=mean_accuracy_scores$mean_accuracy, width=mean_accuracy_scores$width, height=mean_accuracy_scores$height)
+  
+  return(shape_accuracy_score)
+}
+
+# Function to create and save an accuracy heatmap
+create_heatmap <- function(average_accuracies, file_path) {
+  # Create a matrix
+  df2 <- with(average_accuracies, tapply(mean_acc, list(shape = width, height), FUN= mean, na.rm=TRUE))
+  
+  # Define custom color map
+  colours_heat3 = c('#F4E119', '#F7C93B', '#C4BB5F', '#87BE76', '#59BD87', '#2CB6A0', '#00AAC1', '#1B8DCD', '#3D56A6', '#3A449C')
+  
+  # Save the heatmap to a temporary location (because % wont work in the filepath here)
+  png("heatmap_temp_save.png")
+  
+  # Create the heatmap using Lattice plot
+  heatmap <- levelplot(t(df2), cex.axis=1.0, cex.lab=1.0, col.regions=colorRampPalette(rev(colours_heat3)), 
+                       screen = list(z = -90, x = -60, y = 0),
+                       xlab=list(label='height', cex = 1.0),
+                       ylab=list(label='width', cex = 1.0),
+                       main=list(label= paste0('ACCU'), cex=1.0), 
+                       colorkey=list(labels=list(cex=1.0)),
+                       scales = list(cex=1.0),
+                       asp=1)
+  print(heatmap)
+  
+  # Finish saving to PNG file
+  dev.off()
+  
+  # Now, move the heatmap from the temporary location to your desired location
+  # Use fs::file_move() to rename/move the file
+  fs::file_move("heatmap_temp_save.png", paste0(file_path, "/heatmap.png"))
+  
+  return(heatmap)
+}
+
+
+
+
+
+
+
+
+
+
+
+# when you have determined which shape is the best, run the full version and get all the outputs
+performOptimalSOM <- function(trDat, tstDat, width, height, file_path) {
+  
+  ssom <- supersom(trDat, grid = somgrid(width, height, "hexagonal"))
+  
+  # save this optimal SOM
+  save(ssom, file = file.path(file_path, "Dog_SOM.rda"))
+}
+
+# final output, saving the trained SOM, plot it, and save the confusion matrix
+save_and_plot_optimal_SOM <- function(trDat, tstDat, width, height, file_path) {
+  
+  # Create a confusion matrix
+  load(file = file.path(file_path, "Dog_SOM.rda"))
+  ssom.pred <- predict(ssom, newdata = tstDat)
+  ptab <- table(predictions = ssom.pred$predictions$act, act = tstDat$act)
+  write.csv(ptab, file.path(file_path, "Confusion_Matrix.csv"))
+  
+  # make plots
+  # Perform SOM with the optimal width and height
+  SOMoutput <- performOptimalSOM(trDat, tstDat, width, height, file_path)
+  
+  # Extract the prediction outputs
+  pred_outputs <- SOMoutput$SOM_performance
+  SOM_model <- SOMoutput$SOM
+  
+  ## PLOTS 
+  colours <- c("#A6CEE3", "#1F78B4", "#4363d8", "#CAB2D6", "#fabebe", "#FB9A99", 
+               "#FF7F00", "#FDBF6F", "goldenrod1", "#FFFF99", "#bfef45", "#B2DF8A", 
+               "#33A02C", "#469990")
+  
+  # Use the function to save and move the plots
+  # main mapping plots
+  #plot_and_move("Mapping.png", { plot(SOM_model, type="mapping", pchs=20, col=colours, main="Mapping of behaviors on SOM") })
+  plot_and_move("optimal_SOM_plot.png", file_path,
+                { plot(ssom, heatkey = TRUE, col = colours, type = "codes", shape = "straight", ncolors = 14) })
+
+  plot_and_move("Training_Process.png", file_path,
+                { plot(ssom, type="changes", main = "Training Process") })
+  plot_and_move("Codes_Weight.png", file_path,
+                { plot(ssom, type="codes", main="Codes/Weights of the SOM nodes") })
+  plot_and_move("Counts.png", file_path,
+                { plot(ssom, type="counts", main="Counts") })
+  plot_and_move("Quality.png", file_path,
+                { plot(ssom, type="quality", main="Quality") })
+  # Return the confusion matrix for additional use if necessary
+  return(ptab)
+}
+

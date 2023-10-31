@@ -12,6 +12,14 @@ ensure_dir <- function(dir_name) {
   }
 }
 
+# plot a png and then move it to the right directory --> this was a problem for some of my png images
+plot_and_move <- function(filename, file_path, plot_expr) {
+  png(filename = filename)
+  eval(plot_expr)
+  dev.off()
+  fs::file_move(filename, file.path(file_path, filename))
+}
+
 # Function to subset and rename columns to match the general format
 subset_and_rename <- function(df, column_map) {
   # Check if all columns in the mapping exist in the dataframe
