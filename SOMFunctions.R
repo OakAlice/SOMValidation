@@ -3,28 +3,49 @@
 # when you have determined which shape is the best, run the full version and get all the outputs
 evaluateSOM <- function(ssom, type, tstDat) {
   
-  ssom.pred <- predict(ssom, newdata = tstDat)
+  ssom.pred <- predict(ssom, newdata = tstDat, whatmap = "measurements")
   ptab <- table(predictions = ssom.pred$predictions$act, act = tstDat$act)
   
-  true_positives  <- diag(ptab)
+  true_positives <- diag(ptab)
   false_positives <- rowSums(ptab) - true_positives
   false_negatives <- colSums(ptab) - true_positives
-  true_negatives  <- sum(ptab) - true_positives - false_positives - false_negatives
   
-  SENS<-c(true_positives/(true_positives+false_negatives))
-  PREC<-c(true_positives/(true_positives+false_positives))
-  SPEC<-c(true_negatives/(true_negatives+false_positives))
-  ACCU<-c((true_positives+true_negatives)/(true_positives+true_negatives+false_positives+false_negatives))
+  # Calculate true negatives for each class
+  true_negatives <- rep(sum(ptab), length(true_positives)) - rowSums(ptab) - colSums(ptab) + true_positives
   
-  dat_out<-as.data.frame(rbind(SENS,PREC,SPEC,ACCU))
-  statistical_results <- cbind(test = rownames(dat_out), dat_out)
-  write.csv(statistical_results, file.path(Experiment_path, paste0("Results/", type, "_Statistical_results.csv")))
+  # if there were any nas, this should handle it
+  true_positives <- na.omit(true_positives)
+  false_negatives <- na.omit(false_negatives)
+  
+  # Sensitivity, Recall, and Specificity are calculated per class and then averaged
+  SENS <- true_positives / (true_positives + false_negatives)
+  PREC <- true_positives / (true_positives + false_positives)
+  SPEC <- true_negatives / (true_negatives + false_positives)
+  ACCU <- sum(true_positives) / sum(ptab)
+  
+  # Calculate the averages for multi-class precision and sensitivity (recall)
+  AVG_SENS <- mean(SENS)
+  AVG_PREC <- mean(PREC)
+  AVG_SPEC <- mean(SPEC)
+  
+  # Compile the results into a data frame
+  statistical_results <- data.frame(
+    ValidationType = type,
+    Accuracy = ACCU,
+    Specificity = AVG_SPEC,
+    Sensitivity = AVG_SENS,
+    Recall = AVG_SENS, # Recall is the same as Sensitivity
+    Precision = AVG_PREC
+  )
+  
+  # Write the results to a CSV file
+  write.csv(statistical_results, file.path(Experiment_path, paste0("Results/", type, "_Statistical_results.csv")), row.names = FALSE)
   
   SOMoutput <- list(SOM = ssom, SOM_performance = statistical_results)
   
   return(SOMoutput)
-  
 }
+
 
 # Comparing outcomes of the various SOM conditions
 # pull each of the results and combine them into a central csv and set of graphs
@@ -34,28 +55,24 @@ Summarise_results <- function(Results_tables) {
   
   for (results in Results_tables) {
     
-    # results <- Results_tables[4]
     table1 <- read.csv(results)
     
-    # Compute the average for each metric (ignoring the first two columns and the last 'shape' column)
-    table1$average <- rowMeans(table1[, 3:12], na.rm = TRUE)
-    
-    # Extract condition
+    # Extract condition from the filename
     condition <- sub(".*\\/(.*)\\_Statistical_results\\.csv$", "\\1", results)
     
-    # Add subdirectory information to the results
-    table1 <- cbind(table1, as.data.frame(condition))
+    # Select only the metrics and add the condition
+    metrics_table <- table1[, c('ValidationType', 'Accuracy', 'Specificity', 'Sensitivity', 'Recall', 'Precision')]
+    metrics_table$Condition <- condition
     
-    # Only keep the metrics and the subdirectory information
-    average_table1 <- table1[, c("X", "average", "condition")]
-    average_table1 <- average_table1 %>% spread(X, average)
-    
-    Summary_results <- rbind(Summary_results, average_table1)
+    # Combine with the summary results
+    Summary_results <- rbind(Summary_results, metrics_table)
   }
   
-  write.csv(Summary_results, file.path(Experiment_path, "Results/Summary_results.csv"))
+  # Write the combined summary to a CSV file
+  write.csv(Summary_results, file.path(Experiment_path, "Results/Summary_results.csv"), row.names = FALSE)
   return(Summary_results)
 }
+
 
 # Functions to test multiple shapes to find the optimal shape for SOM
 # run the actual SOM tests combining many of the functions above
@@ -109,10 +126,10 @@ determine_best_shape <- function(average_accuracies) {
 testing_the_SOM <- function(trDat, tstDat, width, height) {  # originally doSOMperf
   
   # build the som using the training data
-  ssom <- supersom(trDat, grid = somgrid(width, height, "hexagonal"))
+  ssom <- supersom(trDat, grid = somgrid(width, height, "hexagonal"), whatmap = c("measurements", "activity"))
   # predict on the testing data # skip if it doesn't work
   tryCatch({
-    ssom.pred <- predict(ssom, newdata = tstDat)
+    ssom.pred <- predict(ssom, newdata = tstDat,  whatmap = "measurements")
   }, 
   error = function(e) {
     if (grepl("Number of columns of newdata do not match codebook vectors", e$message)) {
@@ -133,7 +150,7 @@ testing_the_SOM <- function(trDat, tstDat, width, height) {  # originally doSOMp
   SENS<-c(true_positives/(true_positives+false_negatives), shape=width)
   PREC<-c(true_positives/(true_positives+false_positives), shape=width)
   SPEC<-c(true_negatives/(true_negatives+false_positives), shape=width)
-  ACCU<-c((true_positives+true_negatives)/(true_positives+true_negatives+false_positives+false_negatives), shape=width)
+  ACCU<-c(sum(diag(resultsTable))/sum(resultsTable), shape=width)
   
   # save the statistics 
   statisticsTable <- as.data.frame(rbind(SENS,PREC,SPEC,ACCU))
@@ -213,7 +230,7 @@ create_heatmap <- function(average_accuracies, file_path) {
 # when you have determined which shape is the best, run the full version and get all the outputs
 performOptimalSOM <- function(trDat, tstDat, width, height, file_path) {
   
-  ssom <- supersom(trDat, grid = somgrid(width, height, "hexagonal"))
+  ssom <- supersom(trDat, grid = somgrid(width, height, "hexagonal"), whatmap = c("measurements", "activity"))
   
   # save this optimal SOM
   save(ssom, file = file.path(file_path, "Dog_SOM.rda"))
@@ -224,7 +241,7 @@ save_and_plot_optimal_SOM <- function(trDat, tstDat, width, height, file_path) {
   
   # Create a confusion matrix
   load(file = file.path(file_path, "Dog_SOM.rda"))
-  ssom.pred <- predict(ssom, newdata = tstDat)
+  ssom.pred <- predict(ssom, newdata = tstDat, whatmap = "measurements")
   ptab <- table(predictions = ssom.pred$predictions$act, act = tstDat$act)
   write.csv(ptab, file.path(file_path, "Confusion_Matrix.csv"))
   

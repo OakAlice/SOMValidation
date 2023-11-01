@@ -23,10 +23,12 @@
   MoveData <- subset_and_rename(MoveData0, columnSubset)
   
   # downsample the data (for the sake of processing time)
-  skip <- 100 / 20
+  skip <- current_Hz / desired_Hz
   MoveData <- MoveData[seq(1, nrow(MoveData), by = skip), ]
+  
   # select the key behaviours
   MoveData <- MoveData[MoveData$activity %in% selectedBehaviours, ]
+  
   # select indivuduals
   individuals <- unique(MoveData$ID)[1:test_individuals]
   MoveData <- MoveData[MoveData$ID %in% individuals, ]
@@ -42,7 +44,7 @@
   
   # Create Training and Testing Data #
   file_path <- file.path(Experiment_path, 'Processed_Data.csv')
-  split_condition(file_path, threshold, split) # remove trainingPercentage
+  split_condition(file_path, threshold)
   
   # Trial SOM shapes and produce final map #
   load(file = paste0(Experiment_path, "/BuildingSOM/TrainingData.rda"))
@@ -81,9 +83,6 @@
   }
 
 ## Process validation sets into tstDat ##
-# Quoll one dealt with seperately at the bottom
-featuresList <- c("mean", "max", "min", "sd", "cor", "SMA", "minODBA", "maxODBA", "minVDBA", "maxVDBA")
-
 datasets <- list.files(paste0(Experiment_path, "/ValidationSets"), "*_raw.csv")
 for (set in datasets) { # for each of the dataset conditions
     
@@ -103,10 +102,9 @@ for (set in datasets) { # for each of the dataset conditions
 
 
 #### PART THREE: EVALUATION ####
-ValidationTypes <- c("Included", "LOIO", "HoldOut", "Quoll")
-
 # load the ssom
 load(file.path(Experiment_path, "BuildingSOM/Dog_SOM.rda"))
+
 ValidationTypes <- c("Included", "LOIO", "HoldOut", "Quoll")
 
 for (type in ValidationTypes) { # for each of the testing datasets

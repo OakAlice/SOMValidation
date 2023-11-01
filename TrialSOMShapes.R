@@ -63,9 +63,9 @@ determine_best_shape <- function(average_accuracies) {
 testing_the_SOM <- function(TrDat, TstDat, width, height) {  # originally doSOMperf
   
   # build the som using the training data
-  ssom <- supersom(TrDat, grid = somgrid(width, height, "hexagonal"))
+  ssom <- supersom(TrDat, grid = somgrid(width, height, "hexagonal"), whatmap = c("measurements", "activity"))
   # predict on the testing data
-  ssom.pred <- predict(ssom, newdata = TstDat)
+  ssom.pred <- predict(ssom, newdata = TstDat, whatmap = "measurements")
   # save the results as a table
   resultsTable <- table(predictions = ssom.pred$predictions$act, act = TstDat$act)
   
@@ -77,7 +77,7 @@ testing_the_SOM <- function(TrDat, TstDat, width, height) {  # originally doSOMp
   SENS<-c(true_positives/(true_positives+false_negatives), shape=width)
   PREC<-c(true_positives/(true_positives+false_positives), shape=width)
   SPEC<-c(true_negatives/(true_negatives+false_positives), shape=width)
-  ACCU<-c((true_positives+true_negatives)/(true_positives+true_negatives+false_positives+false_negatives), shape=width)
+  ACCU<-c(sum(diag(resultsTable))/sum(resultsTable), shape=width)
   
   # save the statistics 
   statisticsTable <- as.data.frame(rbind(SENS,PREC,SPEC,ACCU))

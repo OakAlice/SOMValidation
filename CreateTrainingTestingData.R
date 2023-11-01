@@ -46,23 +46,27 @@ trSamp2 <- function(x) {
 }
 
 # process the data
-split_condition <- function(filename, threshold) {
+split_condition <- function(file_path, threshold) {
   
-  dat <- read.csv(filename)
+  dat <- read.csv(file_path)
   dat <- na.omit(dat)
   
   # Balance the data
   dat <- downsample_data(dat, threshold)
   
-  # Version One: Random 70:30 split
-  ind <- dat %>% group_by(dat$activity) %>% sample_frac(.7)
-  DogtrDat<-trSamp2(ind)
-  tstind<-subset(dat, !(dat$X %in% ind$X))
-  DogtstDat<-trSamp2(tstind)
+  # Will always be LOIO split
+  number_leave_out <- ceiling((trainingPercentage)*test_individuals)
+  unique_IDs <- unique(dat$ID)
+  selected_individual <- sample(unique_IDs, number_leave_out)
+  #selected_individual <- 20
+  
+  tstDat <- dat %>% filter(ID %in% selected_individual)
+  
+  trDat <- subset(dat, !(ID %in% selected_individual))
   
   # save the random training and testing data
-  save(DogtrDat, file = "DogTrDat.rda")
-  save(DogtstDat, file = "DogTstDat.rda")
+  save(trDat, file = file.path(Experiment_path, "BuildingSOM", "DogTrDat.rda"))
+  save(tstDat, file = file.path(Experiment_path, "BuildingSOM","DogTstDat.rda"))
   
 }
 
